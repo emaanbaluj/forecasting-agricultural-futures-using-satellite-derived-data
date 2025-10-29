@@ -1,0 +1,6 @@
+Metadata-Version: 2.4
+Name: fafusi
+Version: 0.1.0
+Summary: Forecasting agricultural futures utilities
+Requires-Python: >=3.9
+Requires-Dist: earthengine-api

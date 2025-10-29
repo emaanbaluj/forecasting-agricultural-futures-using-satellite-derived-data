@@ -1,0 +1,16 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "fafusi"
+version = "0.1.0"
+description = "Forecasting agricultural futures utilities"
+requires-python = ">=3.9"
+dependencies = ["earthengine-api"]
+
+[tool.setuptools]
+py-modules = ["mosaic_processing"]
+
+[tool.setuptools.package-dir]
+"" = "src"
