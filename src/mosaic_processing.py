@@ -1,14 +1,88 @@
 # src/mosaic_processing.py
+"""
+Utilities to build weekly cloud-masked mosaics from Sentinel-2 Surface Reflectance
+and optionally export the results to Google Drive.
+
+Main features
+-------------
+- Cloud masking via MSK_CLDPRB (cloud probability) and SCL (scene class).
+- Weekly composites using "median", "mean", or "mosaic" reducers.
+- Two common products:
+    • RGB composites (B4/B3/B2)
+    • NDVI composites (band name: "NDVI")
+- Convenience exporters for single images and whole weekly collections.
+
+Quick example
+-------------
+Example:
+    import os, ee
+    from mosaic_processing import MosaicProcessing, export_all_weeks
+
+    ee.Authenticate()
+    ee.Initialize(project=os.getenv("EE_PROJECT_ID"))
+
+    aoi = ee.Geometry.Rectangle([-104.0, 36.0, -80.0, 49.0])
+
+    mp = MosaicProcessing(
+        aoi=aoi,
+        start_date="2021-04-01",
+        end_date="2021-10-01",
+        cloud_prob_max=40,
+        bands=["B2","B3","B4","B8","B11","B12","SCL","MSK_CLDPRB"]
+    )
+
+    rgb = mp.process_rgb(reducer="median")
+    ndvi = mp.process_ndvi(reducer="median")
+
+    export_all_weeks(rgb,  folder="rgb_2021",  scale=10, max_images=4)
+    export_all_weeks(ndvi, folder="ndvi_2021", scale=20, max_images=4)
+"""
+
 from __future__ import annotations
 from typing import Optional, List, Literal
 from datetime import datetime
 import ee
 
+
 class MosaicProcessing:
     """
-    Weekly cloud-masked mosaics from Sentinel-2 SR:
-      • process_rgb()  -> weekly B4/B3/B2 composites
-      • process_ndvi() -> weekly NDVI composites
+    Build weekly cloud-masked mosaics from Sentinel-2 SR for a given AOI/date range.
+
+    Methods
+    -------
+    process_rgb(...)
+        Return an ee.ImageCollection of weekly composites with bands [B4, B3, B2].
+    process_ndvi(...)
+        Return an ee.ImageCollection of weekly NDVI composites (band "NDVI").
+
+    Parameters
+    ----------
+    aoi : ee.Geometry
+        Area of Interest. Any EE geometry is supported (Polygon, Rectangle, etc.).
+    start_date : str
+        Start date in ISO format "YYYY-MM-DD".
+    end_date : str
+        End date in ISO format "YYYY-MM-DD".
+    collection_id : str, default "COPERNICUS/S2_SR"
+        Earth Engine dataset ID to use.
+    cloud_prob_max : int, default 40
+        Maximum value of MSK_CLDPRB (0..100) to keep a pixel.
+    bands : list[str] | None, default None
+        Optional safe-select list of bands to keep after masking (missing bands ignored).
+    scale_to_reflectance : bool, default True
+        Kept for API completeness only; Sentinel-2 SR is already scaled.
+    path_to_drive : str, default ""
+        Reserved for future use.
+
+    Example
+    -------
+    Example:
+        mp = MosaicProcessing(
+            aoi=ee.Geometry.Rectangle([-104,36,-80,49]),
+            start_date="2022-05-01",
+            end_date="2022-09-01",
+            cloud_prob_max=35
+        )
     """
 
     def __init__(
@@ -19,9 +93,19 @@ class MosaicProcessing:
         collection_id: str = "COPERNICUS/S2_SR",
         cloud_prob_max: int = 40,
         bands: Optional[List[str]] = None,   # e.g. ["B2","B3","B4","B8","B11","B12","SCL","MSK_CLDPRB"]
-        scale_to_reflectance: bool = True,    # kept for API completeness; S2_SR is already scaled
+        scale_to_reflectance: bool = True,   # kept for API completeness; S2_SR is already scaled
         path_to_drive: str = ""
     ):
+        """
+        Initialize the processor and pre-build a masked Sentinel-2 collection.
+
+        Raises
+        ------
+        ee.EEException
+            If the Earth Engine client is not initialized.
+        ValueError
+            If dates are malformed.
+        """
         self.aoi = aoi
         self.start = ee.Date(start_date)
         self.end = ee.Date(end_date)
@@ -31,8 +115,6 @@ class MosaicProcessing:
         self.bands = bands
         self.col = self._build_collection()
 
-
-
     # -------------------- public API --------------------
 
     def process_rgb(
@@ -41,7 +123,34 @@ class MosaicProcessing:
         end: Optional[str] = None,
         reducer: Literal["median","mean","mosaic"] = "median"
     ) -> ee.ImageCollection:
-        """Weekly composites with natural-color bands [B4,B3,B2]."""
+        """
+        Create weekly natural-color composites with bands [B4, B3, B2].
+
+        Parameters
+        ----------
+        start : str | None, default None
+            Optional override of start date (ISO "YYYY-MM-DD") for this call only.
+        end : str | None, default None
+            Optional override of end date (ISO "YYYY-MM-DD") for this call only.
+        reducer : {"median","mean","mosaic"}, default "median"
+            Spatial reducer within each week:
+              - "median": robust per-pixel median
+              - "mean":   per-pixel mean
+              - "mosaic": last-on-top mosaic (fast visual composite)
+
+        Returns
+        -------
+        ee.ImageCollection
+            Weekly composites clipped to `aoi`, each image holding [B4, B3, B2].
+            Properties include: "system:time_start", "week_start", "week_end", "reducer".
+
+        Example
+        -------
+        Example:
+            rgb = mp.process_rgb(reducer="median")
+            first = ee.Image(rgb.first())
+            print(first.bandNames().getInfo())  # ['B4','B3','B2']
+        """
         def keep_rgb(i): return i.select(["B4","B3","B2"])
         col = self.col.map(keep_rgb)
         return self._weekly_composite(col, reducer=reducer, start=start, end=end)
@@ -52,21 +161,66 @@ class MosaicProcessing:
         end: Optional[str] = None,
         reducer: Literal["median","mean","mosaic"] = "median"
     ) -> ee.ImageCollection:
-        """Weekly composites of NDVI = (B8 - B4) / (B8 + B4)."""
+        """
+        Create weekly NDVI composites (band "NDVI").
+        NDVI = (B8 - B4) / (B8 + B4), computed per image then composited weekly.
+
+        Parameters
+        ----------
+        start : str | None, default None
+            Optional override of start date (ISO "YYYY-MM-DD") for this call only.
+        end : str | None, default None
+            Optional override of end date (ISO "YYYY-MM-DD") for this call only.
+        reducer : {"median","mean","mosaic"}, default "median"
+            Reducer for compositing the per-image NDVI within each week.
+
+        Returns
+        -------
+        ee.ImageCollection
+            Weekly NDVI composites (single band "NDVI"), clipped to `aoi`.
+            Properties include: "system:time_start", "week_start", "week_end", "reducer".
+
+        Example
+        -------
+        Example:
+            ndvi = mp.process_ndvi(reducer="mean")
+            img = ee.Image(ndvi.first())
+            print(img.bandNames().getInfo())  # ['NDVI']
+        """
         def add_ndvi(i):
             ndvi = i.normalizedDifference(["B8","B4"]).rename("NDVI")
             return i.addBands(ndvi).select(["NDVI"])
         col = self.col.map(add_ndvi)
         return self._weekly_composite(col, reducer=reducer, start=start, end=end)
 
-    # def process_sdvi(self):
-
     # ------------------- internals ---------------------
 
     def _build_collection(self) -> ee.ImageCollection:
+        """
+        Internal: build the base masked collection.
+
+        Returns
+        -------
+        ee.ImageCollection
+            Sentinel-2 SR images filtered by AOI/date and cloud-masked.
+
+        Notes
+        -----
+        - If `bands` were specified in the constructor, they are safely selected:
+          bands not present in a given image are ignored, preventing select errors.
+        - The original "system:time_start" property is preserved on each image.
+
+        Example (debug/inspection only)
+        -------------------------------
+        Example:
+            # Not typically called directly; for inspection you might do:
+            base = mp._build_collection()
+            print(base.first().propertyNames().getInfo())
+        """
         col = (ee.ImageCollection(self.collection_id)
                .filterBounds(self.aoi)
                .filterDate(self.start, self.end))
+
         def prep(i: ee.Image) -> ee.Image:
             i = self._mask_s2(i)
             if self.bands:
@@ -76,9 +230,36 @@ class MosaicProcessing:
                 keep    = wanted.filter(ee.Filter.inList("item", existing))
                 i = i.select(keep)
             return i.copyProperties(i, ["system:time_start"])
+
         return col.map(prep)
 
     def _mask_s2(self, img: ee.Image) -> ee.Image:
+        """
+        Internal: apply Sentinel-2 cloud & class masks.
+
+        Masking rules
+        -------------
+        1) If present, keep pixels where MSK_CLDPRB < cloud_prob_max.
+        2) Always apply SCL mask to keep useful classes:
+           vegetation(4–6), bare(7), snow(10), water(11).
+
+        Parameters
+        ----------
+        img : ee.Image
+            A Sentinel-2 SR image.
+
+        Returns
+        -------
+        ee.Image
+            Masked image with the same bands as input.
+
+        Example (debug only)
+        --------------------
+        Example:
+            # For a single image, you could inspect the mask like this:
+            i = ee.Image(mp._build_collection().first())
+            masked = mp._mask_s2(i)
+        """
         # Cloud prob (0-100): keep where < threshold, if band exists
         def with_cp(ii): return ii.updateMask(ii.select("MSK_CLDPRB").lt(self.cloud_prob_max))
         img = ee.Image(ee.Algorithms.If(img.bandNames().contains("MSK_CLDPRB"), with_cp(img), img))
@@ -95,6 +276,35 @@ class MosaicProcessing:
         start: Optional[str] = None,
         end: Optional[str] = None
     ) -> ee.ImageCollection:
+        """
+        Internal: convert a (masked) collection into weekly composites.
+
+        Parameters
+        ----------
+        col : ee.ImageCollection
+            Pre-masked collection to composite weekly.
+        reducer : {"median","mean","mosaic"}, default "median"
+            Spatial reducer to apply within each 7-day window.
+        start : str | None, default None
+            Optional override of start date in ISO format.
+        end : str | None, default None
+            Optional override of end date in ISO format. If None, defaults to *today*.
+
+        Returns
+        -------
+        ee.ImageCollection
+            Weekly composites clipped to `aoi`. Each image carries:
+            - "system:time_start" (epoch ms)
+            - "week_start", "week_end" (ISO strings)
+            - "reducer" (the reducer used)
+
+        Example (advanced)
+        ------------------
+        Example:
+            # Not needed in normal use; called internally by process_* methods.
+            weekly = mp._weekly_composite(mp._build_collection(), reducer="median")
+            print(weekly.size().getInfo())
+        """
         # dates: default to instance range; end defaults to today if omitted by caller
         s = ee.Date(start) if start else self.start
         e = ee.Date(end)   if end   else (ee.Date(datetime.today().strftime("%Y-%m-%d")) if end is None else self.end)
@@ -117,7 +327,9 @@ class MosaicProcessing:
 
         return ee.ImageCollection(ticks.map(per_week))
 
-    # ------------------- export ---------------------
+
+# ------------------- export helpers ---------------------
+
 def export_to_drive(
     image: ee.Image,
     description: str,
@@ -129,26 +341,42 @@ def export_to_drive(
     max_pixels: int = 1_000_000_000
 ) -> ee.batch.Task:
     """
-    Exports a single Earth Engine image to Google Drive.
+    Export a single Earth Engine image to Google Drive.
 
     Parameters
     ----------
     image : ee.Image
-        The image to export.
+        Image to export (e.g., one weekly composite).
     description : str
         Task name and file prefix in Drive.
-    folder : str, default 'ee-exports'
-        Drive folder where the file will be saved.
-    region : ee.Geometry or None
-        Export region (defaults to image bounds if None).
+    folder : str, default "ee-exports"
+        Drive folder name. Auto-created if it doesn't exist.
+    region : ee.Geometry | None, default None
+        Export geometry. Defaults to image geometry if not provided.
     scale : int, default 20
-        Pixel resolution in meters.
-    crs : str, default 'EPSG:4326'
-        Coordinate reference system.
-    file_format : str, default 'GeoTIFF'
-        Output file format ('GeoTIFF' or 'TFRecord', etc.).
-    max_pixels : int, default 1e9
-        Maximum pixel count allowed by EE.
+        Pixel size in meters (S2 native is 10 m; 20 m is common for NDVI).
+    crs : str, default "EPSG:4326"
+        Output CRS. Choose a projected CRS for area-accurate analytics.
+    file_format : str, default "GeoTIFF"
+        Output format (e.g., "GeoTIFF", "TFRecord").
+    max_pixels : int, default 1_000_000_000
+        Maximum pixels allowed for the export.
+
+    Returns
+    -------
+    ee.batch.Task
+        The started export task.
+
+    Example
+    -------
+    Example:
+        ee.Initialize(project=os.getenv("EE_PROJECT_ID"))
+        aoi = ee.Geometry.Rectangle([-104,36,-80,49])
+        mp = MosaicProcessing(aoi, "2021-04-01", "2021-10-01")
+        img = ee.Image(mp.process_ndvi().first())
+        task = export_to_drive(img, description="ndvi_2021_week1",
+                               folder="ndvi_2021", scale=20)
+        # Monitor in EE Code Editor → Tasks
     """
     if region is None:
         region = image.geometry()
@@ -170,10 +398,49 @@ def export_to_drive(
     return task
 
 
-def export_all_weeks(imgcol, folder="weekly_rgb", scale=20, max_images=None):
+def export_all_weeks(
+    imgcol: ee.ImageCollection,
+    folder: str = "weekly_rgb",
+    scale: int = 20,
+    max_images: Optional[int] = None
+) -> None:
     """
-    Exports each weekly image in an ImageCollection to Google Drive.
-    Works for any product (RGB, NDVI, etc.).
+    Export each image in a weekly ImageCollection to Google Drive.
+
+    Parameters
+    ----------
+    imgcol : ee.ImageCollection
+        Typically the output of process_rgb() or process_ndvi().
+    folder : str, default "weekly_rgb"
+        Drive folder name where images will be saved.
+    scale : int, default 20
+        Pixel size in meters for all exports.
+    max_images : int | None, default None
+        If provided, only the first `max_images` images are exported (helpful for quotas).
+
+    Returns
+    -------
+    None
+        Starts one EE export task per image (beware of task limits).
+
+    Notes
+    -----
+    - Earth Engine enforces a limit on simultaneous tasks (often ~100).
+      Use `max_images`, export in batches, or monitor from the EE Code Editor.
+    - Each file will be named with prefix "{folder}_{week_start}".
+
+    Example
+    -------
+    Example:
+        ee.Initialize(project=os.getenv("EE_PROJECT_ID"))
+        aoi = ee.Geometry.Rectangle([-104,36,-80,49])
+        mp = MosaicProcessing(aoi, "2022-06-01", "2022-09-01")
+
+        rgb = mp.process_rgb(reducer="median")
+        export_all_weeks(rgb, folder="rgb_weeks_2022", scale=10, max_images=6)
+
+        ndvi = mp.process_ndvi(reducer="median")
+        export_all_weeks(ndvi, folder="ndvi_weeks_2022", scale=20, max_images=6)
     """
     n = imgcol.size().getInfo()
     if max_images:
