@@ -1,0 +1,202 @@
+\documentclass[12pt,a4paper]{article}
+\usepackage[a4paper, left=1.3in, right=1.3in, top=1in, bottom=1in]{geometry}
+
+\usepackage{setspace}
+\usepackage{tocloft}
+\setlength{\cftbeforesecskip}{6pt}
+\setlength{\parindent}{0pt} % <-- No paragraph indentation
+
+\begin{document}
+
+% ---------- Title Page ----------
+\thispagestyle{empty}
+\begin{center}
+\Large
+\textbf{Electronics and Computer Science\\
+Faculty of Physical Sciences and\\
+Engineering\\
+University of Southampton}
+
+\vspace{1.8cm}
+
+\large
+Emaan Baluj
+\vspace{1.2cm}
+
+\Large
+\textbf{ChatGPT said:
+
+Spatio-Temporal Machine Learning for Agricultural Futures Price Forecasting using Satellite-Derived Data }\\[0.4em]
+
+\vspace{1.8cm}
+
+\large
+\textbf{Supervisor:} Prof.\ David Thomas\\
+\textbf{Second Examiner:} Dr.\ [Second Examiner Name]
+
+\vspace{2.0cm}
+
+\Large
+A project report submitted for the award of\\[0.2cm]
+MEng Computer Science with Artificial Intelligence
+\end{center}
+
+% ---------- Blank Page ----------
+\newpage
+\thispagestyle{empty}
+\null
+\newpage
+
+% ---------- Abstract Page ----------
+\thispagestyle{plain}
+\begin{center}
+\Large
+\textbf{ABSTRACT}\\[0.8cm]
+\large
+FACULTY OF ENGINEERING AND PHYSICAL SCIENCES\\
+SCHOOL OF ELECTRONICS AND COMPUTER SCIENCE\\[0.8cm]
+A project report submitted for the award of\\
+MEng Computer Science with Artificial Intelligence\\[0.8cm]
+by\\[0.3cm]
+\textbf{Emaan Baluj}
+\end{center}
+
+\vspace{1.2cm}
+
+\onehalfspacing
+% ---------- Abstract Text ----------
+This project investigates the use of satellite imagery, specifically Sentinel-2 surface reflectance data, to forecast agricultural futures prices across the U.S. Corn Belt. Weekly NDVI mosaics were generated in Google Earth Engine after applying cloud and shadow masks, enabling construction of a time-series dataset that captures the evolution of vegetation health. These features were then used to train and compare classical machine learning, deep learning, and computer vision models for price forecasting.
+
+The study aims to determine whether multi-temporal vegetation indices, as proxies for crop growth and yield expectations, contain predictive information about commodity price dynamics. The models are evaluated based on predictive accuracy, interpretability, and robustness to noise. Results show that NDVI-based temporal features improve short-term forecasting of corn futures, particularly during key phenological phases, illustrating the potential of remote-sensing data as an alternative and complementary information source for agricultural finance. The findings support further integration of Earth observation and data-driven methods for market forecasting and risk management.
+
+\vfill
+\newpage
+
+% ---------- Table of Contents ----------
+\tableofcontents
+\newpage
+
+% ---------- Introduction ----------
+\section{Introduction}
+
+\subsection{Problem Statement}
+Agricultural futures prices are assumed to follow the fundamental forces of supply and demand: when expected supply is high due to greater harvest yields, positive crop health, etc., it is assumed that prices will fall. Conversely, when supply is tight—due to factors like poor weather, pests, or other disruptions—prices are expected to rise, all else being equal. Market participants rely on \emph{timely} assessments of crop conditions and expected production. However, widely used fundamentals—official crop reports (e.g., \textit{USDA Crop Progress}, \textit{WASDE}) and surveys—are infrequent, delayed, and publicly released, resulting in markets acting on this information swiftly, offering little to no informational edge.
+
+\vspace{5pt}
+\noindent
+Alternatively, \emph{satellite imagery} can be accessed with greater frequency, providing wide-area observations of vegetation health and surface conditions for crop growth. This raw data can be processed into cloud-filtered images, and normalized vegetation indices such as the \textit{Normalized Difference Vegetation Index (NDVI)} can be computed. Image-based features are then extracted to create market-aligned indicators for key producing regions.
+
+\subsection{Goal}
+This project explores whether raw satellite imagery, when processed using machine learning, deep learning, and computer vision frameworks, can enhance short-term forecasts of agricultural futures prices by identifying predictive patterns directly from the satellite images. It will also assess which approach is most economically consistent with the relevant market (e.g., does greater vegetation health lead to lower prices?). This study compares traditional feature extraction methods—where specific image-based features are manually selected—as inputs for statistical learning, with modern approaches that use deep learning to automatically learn relevant patterns from the raw imagery.
+
+\subsection{Scope}
+The project focuses on satellite-derived imagery for forecasting agricultural futures prices alongside selected supplementary indicators. Futures price data will not be used as input variables, ensuring that the models rely on exogenous features rather than auto regressive price dependencies, thereby avoiding potential information leakage and overfitting to past market movements. The primary datasets include \textit{Sentinel-2} and \textit{Landsat} imagery, from which vegetation indices and related biophysical indicators will be derived to capture crop health dynamics across the U.S. Corn Belt. The study is limited to weekly historical satellite images and will not incorporate real-time data or live market forecasting. The primary focus is on corn futures, as data availability and agronomic consistency are highest across major producing regions in the Corn Belt. However, should sufficient data become accessible, the framework may be extended to additional commodities such as soybeans, wheat, and other staple crops.
+
+
+
+
+\newpage
+
+\vspace{10pt}
+\subsection*{Fundamentals of Agricultural Futures Markets}
+\subsubsection*{Market Role and Price Dynamics}
+Agricultural futures markets play a vital role in global commodity trading by enabling market participants to hedge against price volatility, speculate on future price movements, and manage risk—all centred around the production, distribution, and consumption of agricultural commodities. Futures prices of staple crops such as corn, wheat, and rice play a significant role in reflecting market expectations, as price fluctuations largely reflect shifts in underlying agronomic and environmental conditions that influence expected crop yields.
+
+Expected supply in agricultural markets responds sharply to variations in productivity. As a result, weaker anticipated harvests place upward pressure on prices, while stronger production expectations typically lead to lower prices. These price dynamics highlight the forward-looking nature of futures markets, where contracts serve as the primary instruments through which expectations about future conditions are traded.
+
+\subsubsection*{Futures Contracts and Core Functions}
+``A futures contract is a contract to buy or sell a standard quantity of a 
+specified grade of a commodity at a designated location, on a future date, 
+and at a pre-agreed price'' \cite{1}.
+
+\vspace{10pt}
+These contracts are standardised by exchanges such as the CBOT, which specify the quality grade, contract size, delivery location, and delivery month for each commodity. Such standardisation concentrates liquidity in a small set of uniform contracts, enabling transparent and efficient trading across participants.
+
+The two most fundamental economic contributors of futures markets are \textbf{hedging} and \textbf{price discovery}.
+
+Hedging involves taking an offsetting futures position to reduce exposure to adverse movements in the underlying commodity price. In agricultural markets, producers and processors routinely hedge to stabilise revenues or input costs in the face of uncertain harvest outcomes and fluctuating prices. For example a farmer might sell futures contracts hedge against the risk of falling prices before harvest to protect their income and profitability. The farmer locks in a price level ahead of harvest, ensuring that any loss in the physical market is offset by an opposing gain on the short futures position.
+
+
+Price discovery reflects the informational role of the market: as new information becomes available, trading activity in the futures market adjusts prices to reflect the collective expectations of future supply and demand conditions. This forward-looking behavior is particularly relevant for agricultural commodities, where production uncertainty makes timely information especially valuable.
+
+\subsection*{Statistical Approaches to Forecasting Agricultural Prices}
+Traditional approaches to price forecasting in agricultural markets rely on
+statistical methods, specifically time-series models that capture temporal
+dependencies and, where applicable, interactions across economic variables.
+Historically, a wide range of linear time-series models have been applied to
+agricultural futures prices, including autoregressive (AR) models, autoregressive
+integrated moving-average (ARIMA) models, and vector autoregressions (VAR). 
+
+Overall, the computational cost of is inexpensive, as they only capture simple temporal structures within our discrete time series, and require minimal date prepossessing and less training data, making them suitable baselines due to their simplicity, transparency and historical significance in price forecasting. 
+
+\subsubsection*{Autoregressive AR(\(p\)) Model}
+
+The autoregressive AR(\(p\)) model states that the price \(P_t\) can be modeled as a linear function of its preceding values, each entering the model with an associated weight \(\phi\). It assumes that current data points are dependent on previous data points defined by the number of lagged values \(\textit{p}\) and stochastic error \(\varepsilon_t\) in the prediction.
+
+\begin{equation}
+P_t = c + \sum_{i=1}^{p} \phi_i P_{t-i} + \varepsilon_t
+\end{equation}
+
+Where:
+\begin{itemize}
+    \item \(P_t\) is the current value,
+    \item \(c\) is a constant,
+    \item \(\phi_i\) are the weights for the lagged values,
+    \item \(P_{t-i}\) are the lagged values of the price,
+    \item \(\varepsilon_t\) is the error term at time \(t\).
+\end{itemize}
+
+
+
+\subsubsection*{Autoregressive Moving-Average Model (ARMA)}
+
+The autoregressive moving average (ARMA) model combines two components: the autoregressive model AR(\(p\)) for observed values (e.g., prices) and the moving average model MA(\(q\)) for the error terms \(\varepsilon_t\).
+
+
+\begin{equation}
+P_t = c + \sum_{i=1}^{p} \phi_i P_{t-i} + \sum_{j=1}^{q} \theta_j \varepsilon_{t-j} + \varepsilon_t
+\end{equation}
+
+Where:
+\begin{itemize}
+    \item \(P_t\) is the current value (e.g., price),
+    \item \(c\) is a constant,
+    \item \(\phi_i\) are the coefficients for the autoregressive (AR) part,
+    \item \(\theta_j\) are the coefficients for the moving average (MA) part,
+    \item \(P_{t-i}\) are the past observed values (lags),
+    \item \(\varepsilon_{t-j}\) are the past error terms (lags),
+    \item \(\varepsilon_t\) is the current error term.
+\end{itemize}
+
+However
+
+
+
+
+\section{Methodology}
+% Data Sources, Preprocessing, Feature Engineering, Models
+
+\section{Results and Discussion}
+
+\section{Conclusion and Future Work}
+
+% ---------- Bibliography ----------
+\newpage
+\section*{References}
+\addcontentsline{toc}{section}{References}
+
+\begin{thebibliography}{9}
+
+\bibitem{1}
+Somanathan, T.V., Nageswaran, V.A. and Gupta, H. (2021).
+\textit{Derivatives: Futures and Forwards}.
+Cambridge: Cambridge University Press.
+
+\bibitem{2}
+Hull, J.C. (2022).
+\textit{Options, Futures, and Other Derivatives}.
+11th ed. Harlow: Pearson Education.
+
+\end{thebibliography}
+
+\end{document}
